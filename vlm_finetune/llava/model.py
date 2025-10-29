@@ -27,6 +27,7 @@ from vlm_finetune.utils import set_logger
 
 logger = set_logger(__name__)
 
+
 @AutoVlmModel.register("llava")
 class LLavaModel(VlmModel):
     """
@@ -34,8 +35,21 @@ class LLavaModel(VlmModel):
     обеспечивающий удобный интерфейс для обучения и инференса.
 
     Атрибуты:
-        model: экземпляр базовой модели LLaVA.
-        processor: процессор для преобразования данных (изображений и текста).
+        model (LlavaModel): инстанс предобученной модели LLaVA.
+        processor (LlavaProcessor): процессор для преобразования изображений и текста.
+        image_processor (ImageProcessor | None): опциональный препроцессор изображений,
+            позволяющий использовать пользовательские преобразования перед подачей в модель.
+
+    Особенности:
+        • поддержка LoRA-дообучения;
+        • единый интерфейс для тренировки и инференса;
+        • поддержка изображений как PIL.Image, так и string-пути;
+        • совместим с фабрикой `AutoVlmModel` и абстракцией `VlmModel`.
+
+    Пример:
+        >>> model = AutoVlmModel.create("llava", ...)
+        >>> model.finetune(dataset_path, output_dir="./ckpt")
+        >>> model.predict("cat.png", "Что за животное на фото?")
     """
 
     def __init__(
@@ -48,8 +62,13 @@ class LLavaModel(VlmModel):
         Инициализация экземпляра `LLavaModel`.
 
         Параметры:
-            model: предобученная модель LLaVA.
-            processor: процессор для обработки изображений и текстов.
+            model (LlavaModel): предобученная модель LLaVA.
+            processor (LlavaProcessor): процессор для обработки изображений и текстов.
+            image_processor (ImageProcessor | None): кастомный препроцессор изображений.
+
+        Особенности реализации:
+            • вызывает базовый конструктор `VlmModel`;
+            • позволяет переопределить пайплайн обработки изображений.
         """
         super().__init__(model=model, processor=processor, image_processor=image_processor)
 
@@ -68,27 +87,34 @@ class LLavaModel(VlmModel):
         Дообучает модель LLaVA на пользовательском датасете с использованием LoRA.
 
         Параметры:
-            dataset_path: путь к датасету или список объектов, содержащих пути к изображениям и текстам.
-            output_dir: директория для сохранения результатов обучения.
-            learning_rate: скорость обучения (по умолчанию 2e-4).
-            num_train_epochs: количество эпох обучения.
-            prompt: шаблон текстового промпта, если требуется.
-            lora_params: словарь параметров для LoRA (по умолчанию `DEFAULT_LORA`).
-            training_params: параметры обучения (по умолчанию `DEFAULT_TRAINING`).
+            dataset_path (list[dict[str,str]]): список объектов с путями к изображениям и текстом.
+            output_dir (str): директория для сохранения чекпоинтов.
+            learning_rate (float): скорость обучения (default: 2e-4).
+            num_train_epochs (int): количество эпох обучения.
+            prompt (str | None): шаблон системного промпта для датасета.
+            lora_params (dict[str,Any] | None): параметры LoRA-адаптации.
+            training_params (dict[str,Any] | None): параметры тренировки (trainer, scheduler и т.д.).
 
         Возвращает:
             None
 
         Исключения:
-            ValueError: если датасет пуст или некорректен.
+            ValueError: если датасет пуст или содержит некорректные записи.
+
+        Детали:
+            • создаёт `LLavaDataset` с процессором и опциональным image_processor;
+            • делегирует обучение базовому `VlmModel.finetune`.
+
+        Использование:
+            >>> model.finetune(dataset, "./output", learning_rate=1e-4)
         """
         dataset = LLavaDataset(dataset_path=dataset_path, processor=self.processor, prompt=prompt, image_processor=self.image_processor)
         super().finetune(
-            dataset=dataset, 
-            output_dir=output_dir, 
-            learning_rate=learning_rate, 
-            num_train_epochs=num_train_epochs, 
-            lora_params=lora_params, 
+            dataset=dataset,
+            output_dir=output_dir,
+            learning_rate=learning_rate,
+            num_train_epochs=num_train_epochs,
+            lora_params=lora_params,
             training_params=training_params
         )
 
@@ -98,15 +124,23 @@ class LLavaModel(VlmModel):
         Выполняет генерацию текстового ответа по изображению и текстовому запросу.
 
         Параметры:
-            image: изображение (объект PIL.Image или путь к файлу).
-            prompt: текстовый запрос пользователя.
-            max_new_tokens: максимальное количество генерируемых токенов (по умолчанию 256).
+            image (PIL.Image | str): изображение или путь к изображению.
+            prompt (str): текстовый запрос.
+            max_new_tokens (int): ограничение длины ответа модели.
 
         Возвращает:
-            Текстовый ответ модели.
+            str: текстовый ответ модели без служебных префиксов (`ASSISTANT:`).
 
         Исключения:
-            RuntimeError: при ошибке генерации ответа.
+            RuntimeError: при ошибке генерации или обработке изображения.
+
+        Детали:
+            • вызывает базовый метод `VlmModel.predict`;
+            • post-processing: вырезает часть ответа после `ASSISTANT:`.
+
+        Пример:
+            >>> model.predict("dog.jpg", "Что изображено?")
+            'На фото собака.'
         """
         model_reponse = super().predict(image=image, prompt=prompt, max_new_tokens=max_new_tokens)
         model_answer = model_reponse[0].split("ASSISTANT:")[1].strip()

@@ -3,26 +3,31 @@
 визуально-лингвистических моделей (Vision-Language Models, VLM) через библиотеку `transformers`.
 
 Основные возможности:
-    • Регистрация собственных подклассов моделей.
+    • Регистрация собственных подклассов моделей через декоратор `@register`.
     • Автоматическая загрузка процессора и модели по имени.
-    • Поддержка 4-битной квантизации с помощью BitsAndBytes.
+    • Поддержка 4-битной квантизации (BitsAndBytes) для экономии видеопамяти.
+    • Единый интерфейс для различных VLM-архитектур (LLaVA, Qwen-VL, etc.).
 
 Классы:
-    AutoVlmModel — базовый класс для создания и регистрации VLM-моделей.
+    AutoVlmModel — базовый класс-фабрика для создания и регистрации VLM-моделей.
 
-Переменные:
-    DEVICE — устройство вычислений ("cuda" или "cpu").
-    BNB_CONFIG — конфигурация для 4-битной квантизации модели.
+Константы:
+    DEVICE — устройство вычислений: "cuda" или "cpu".
+    BNB_CONFIG — конфигурация BitsAndBytesConfig для 4-битной загрузки.
 
 Исключения:
-    OSError — при попытке прямой инициализации класса AutoVlmModel.
-    ValueError — при указании неизвестного типа модели.
+    OSError — если происходит попытка прямой инициализации базового класса.
+    ValueError — если указан не зарегистрированный тип модели.
 """
 
 from typing import Any, TypeVar
 
 import torch
-from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
+from transformers import (
+    AutoModelForImageTextToText,
+    AutoProcessor,
+    BitsAndBytesConfig
+)
 
 from vlm_finetune.base import ImageProcessor
 
@@ -39,49 +44,53 @@ BNB_CONFIG: BitsAndBytesConfig = BitsAndBytesConfig(
 
 class AutoVlmModel:
     """
-    Базовый класс для загрузки визуально-лингвистических моделей (VLM)
-    и управления их регистрацией.
+    Базовый класс для фабричной загрузки VLM-моделей.
 
-    Класс предоставляет фабричный метод `from_name` для автоматической инициализации
-    нужного подкласса модели на основе её префикса (например, "llava:", "blip:" и т.п.).
+    Этот класс нельзя инициализировать напрямую — модели создаются через
+    `AutoVlmModel.from_name(...)`, который подбирает зарегистрированный подкласс
+    по префиксу модели (например, `llava`, `qwen`, `blip`).
 
-    Атрибуты:
-        _registry: словарь зарегистрированных подклассов моделей.
+    Атрибуты класса:
+        _registry: словарь сопоставления:
+            <строковый префикс модели> -> <подкласс AutoVlmModel>
+
+    Каждый зарегистрированный подкласс обязан принимать параметры:
+        model: torch.nn.Module — загруженная модель
+        processor: PreTrainedProcessor — процессор для токенизации и обработки изображений
+        image_processor: ImageProcessor | None — внешний обработчик изображений (опционально)
     """
 
     _registry: dict[str, type["AutoVlmModel"]] = {}
 
     def __init__(self):
         """
-        Запрещает прямое создание экземпляров класса.
-
-        Исключения:
-            OSError: если выполняется попытка создать экземпляр напрямую.
+        Базовый конструктор запрещён — используйте `from_name`.
         """
         raise OSError(
-            "AutoVlmModel должен быть создан через `AutoVlmModel.from_name(name)`."
+            "AutoVlmModel должен быть создан через `AutoVlmModel.from_name(name, ...)`, "
+            "а не через прямой вызов конструктора."
         )
 
     @classmethod
     def register(cls, name: str):
         """
-        Декоратор для регистрации нового подкласса модели.
+        Декоратор для регистрации подклассов модели.
 
         Параметры:
-            name: имя модели (префикс, например, "llava"),
-                  используемое при вызове `from_name`.
-
-        Возвращает:
-            Декоратор, который добавляет подкласс модели в реестр.
+            name: str — имя модели, используемое в `AutoVlmModel.from_name(...)`.
 
         Пример:
             >>> @AutoVlmModel.register("llava")
             ... class LlavaModel(AutoVlmModel):
-            ...     pass
+            ...     def __init__(self, model, processor, image_processor=None):
+            ...         self.model = model
+            ...         self.processor = processor
+            ...         self.image_processor = image_processor
         """
         def decorator(subclass: type["AutoVlmModel"]) -> type["AutoVlmModel"]:
             cls._registry[name.lower()] = subclass
             return subclass
+
         return decorator
 
     @classmethod
@@ -98,23 +107,24 @@ class AutoVlmModel:
         image_processor: ImageProcessor | None = None
     ) -> T:
         """
-        Фабричный метод для загрузки модели и процессора по имени и пути.
+        Фабрика для загрузки VLM-модели и процессора по имени и пути.
 
         Параметры:
-            model_name: имя модели (например, "llava").
-            model_path: путь к предобученной модели.
-            model_dtype: тип данных (по умолчанию float16).
-            bnb_config: конфигурация BitsAndBytes для 4-битной загрузки.
-            device: устройство для загрузки модели ("cuda" или "cpu").
-            device_map: карта распределения модели по устройствам (опционально).
-            model_params: дополнительные параметры при инициализации модели.
-            processor_params: дополнительные параметры при инициализации процессора.
+            model_name: str — имя/префикс модели (например, "llava").
+            model_path: str — путь/ID модели в HuggingFace Hub или локально.
+            model_dtype: torch.dtype — dtype для загрузки (по умолчанию FP16).
+            bnb_config: BitsAndBytesConfig | None — конфиг 4-битной загрузки.
+            device: "cuda" | "cpu" — устройство для размещения модели.
+            device_map: dict | str | None — карта устройств для accelerate (если надо).
+            model_params: dict — дополнительные параметры в модель.
+            processor_params: dict — параметры в AutoProcessor.
+            image_processor: ImageProcessor | None — внешняя обработка изображений.
 
         Возвращает:
-            Экземпляр зарегистрированного подкласса `AutoVlmModel`.
+            Экземпляр зарегистрированного подкласса модели.
 
         Исключения:
-            ValueError: если указанный префикс модели не зарегистрирован.
+            ValueError: если `model_name` не найден в `AutoVlmModel._registry`.
         """
         subclass = cls._registry.get(model_name)
         processor_params = processor_params or {}
@@ -125,6 +135,7 @@ class AutoVlmModel:
             use_fast=True,
             **processor_params
         )
+
         model = AutoModelForImageTextToText.from_pretrained(
             pretrained_model_name_or_path=model_path,
             dtype=model_dtype,
@@ -134,7 +145,8 @@ class AutoVlmModel:
         )
         model = model.to(device)
 
-        if subclass is None:
-            raise ValueError(f"Неизвестный тип VLM модели: {model_name}")
-
-        return subclass(model=model, processor=processor, image_processor=image_processor)  # type: ignore
+        return subclass(
+            model=model,
+            processor=processor,
+            image_processor=image_processor
+        )

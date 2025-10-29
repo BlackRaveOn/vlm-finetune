@@ -1,17 +1,21 @@
 """
-Модуль `llava_model` реализует класс `LLavaModel`, предназначенный для дообучения и
-инференса мультимодальной модели LLaVA (Large Language and Vision Assistant).
+Модуль `qwen_model` реализует класс `QwenModel`, предназначенный для
+дообучения и инференса мультимодальной модели Qwen-VL (Qwen2.5-VL).
 
-Основные возможности:
-    • Загрузка и настройка модели через фабрику `AutoVlmModel`.
-    • Дообучение модели с использованием LoRA (Low-Rank Adaptation).
-    • Генерация текстовых ответов по изображениям и промптам.
+Функциональность:
+    ─ Загрузка модели через фабрику `AutoVlmModel`
+    ─ Дообучение на пользовательских данных с использованием LoRA
+    ─ Генерация ответов по изображению и текстовому запросу
 
-Классы:
-    LLavaModel — класс, реализующий дообучение и предсказание для модели LLaVA.
+Модель использует архитектуру Qwen-VL, поддерживающую совместную
+обработку изображений и текста и формат chat-инструкций, применяемый
+в `Qwen2_5_VLProcessor`.
+
+Класс:
+    QwenModel — интерфейс обучения и инференса мультимодели Qwen-VL
 
 Исключения:
-    ValueError — при некорректных данных в датасете или ошибках в параметрах обучения.
+    ValueError — при некорректных параметрах обучения или датасете
 """
 
 from typing import Any, override
@@ -27,15 +31,21 @@ from vlm_finetune.utils import set_logger
 
 logger = set_logger(__name__)
 
+
 @AutoVlmModel.register("qwen")
 class QwenModel(VlmModel):
     """
-    Класс `LLavaModel` представляет собой адаптер для модели LLaVA,
-    обеспечивающий удобный интерфейс для обучения и инференса.
+    Класс `QwenModel` предоставляет интерфейс для дообучения и инференса
+    модели Qwen-VL (Qwen2.5-VL).
+
+    Служит адаптером над базовой моделью: подготавливает датасет,
+    вызывает тренировочный pipeline, а также реализует удобный
+    предикт-интерфейс для диалогового формата.
 
     Атрибуты:
-        model: экземпляр базовой модели LLaVA.
-        processor: процессор для преобразования данных (изображений и текста).
+        model — загруженная мультимодальная модель Qwen-VL
+        processor — процессор для изображений и токенизации чата
+        image_processor — объект для предобработки изображений
     """
 
     def __init__(
@@ -45,11 +55,12 @@ class QwenModel(VlmModel):
         image_processor: ImageProcessor | None = None
     ) -> None:
         """
-        Инициализация экземпляра `LLavaModel`.
+        Инициализация модели.
 
         Параметры:
-            model: предобученная модель LLaVA.
-            processor: процессор для обработки изображений и текстов.
+            model — предобученная Qwen-VL модель
+            processor — процессор токенизации и обработки изображений
+            image_processor — пользовательский препроцессор изображений
         """
         super().__init__(model=model, processor=processor, image_processor=image_processor)
 
@@ -65,49 +76,62 @@ class QwenModel(VlmModel):
         training_params: dict[str, Any] | None = None,
     ) -> None:
         """
-        Дообучает модель LLaVA на пользовательском датасете с использованием LoRA.
+        Дообучает модель Qwen-VL на пользовательском датасете с LoRA-адаптацией.
+
+        Ожидается JSON-датасет вида:
+        {
+            "image_path": "...",
+            "prompt": "текст запроса",
+            "answer": "ответ модели"
+        }
 
         Параметры:
-            dataset_path: путь к датасету или список объектов, содержащих пути к изображениям и текстам.
-            output_dir: директория для сохранения результатов обучения.
-            learning_rate: скорость обучения (по умолчанию 2e-4).
-            num_train_epochs: количество эпох обучения.
-            prompt: шаблон текстового промпта, если требуется.
-            lora_params: словарь параметров для LoRA (по умолчанию `DEFAULT_LORA`).
-            training_params: параметры обучения (по умолчанию `DEFAULT_TRAINING`).
-
-        Возвращает:
-            None
+            dataset_path — путь к данным или список объектов
+            output_dir — директория сохранения модели
+            learning_rate — LR для обучения
+            num_train_epochs — количество эпох
+            prompt — глобальный промпт (если не задан в данных)
+            lora_params — параметры LoRA
+            training_params — доп. параметры обучения
 
         Исключения:
-            ValueError: если датасет пуст или некорректен.
+            ValueError — при пустом или неверном датасете
         """
-        dataset = QwenDataset(dataset_path=dataset_path, processor=self.processor, prompt=prompt, image_processor=self.image_processor)
+        dataset = QwenDataset(
+            dataset_path=dataset_path,
+            processor=self.processor,
+            prompt=prompt,
+            image_processor=self.image_processor
+        )
+
         super().finetune(
-            dataset=dataset, 
-            output_dir=output_dir, 
-            learning_rate=learning_rate, 
-            num_train_epochs=num_train_epochs, 
-            lora_params=lora_params, 
+            dataset=dataset,
+            output_dir=output_dir,
+            learning_rate=learning_rate,
+            num_train_epochs=num_train_epochs,
+            lora_params=lora_params,
             training_params=training_params
         )
 
     @override
     def predict(self, image: Image.Image | str, prompt: str, max_new_tokens: int = 256) -> str:
         """
-        Выполняет генерацию текстового ответа по изображению и текстовому запросу.
+        Генерирует текстовый ответ на изображение и пользовательский запрос.
 
         Параметры:
-            image: изображение (объект PIL.Image или путь к файлу).
-            prompt: текстовый запрос пользователя.
-            max_new_tokens: максимальное количество генерируемых токенов (по умолчанию 256).
+            image — путь или PIL.Image
+            prompt — текстовый запрос
+            max_new_tokens — ограничение длины ответа
 
         Возвращает:
-            Текстовый ответ модели.
-
-        Исключения:
-            RuntimeError: при ошибке генерации ответа.
+            Строку — ответ модели
         """
-        model_reponse = super().predict(image=image, prompt=prompt, max_new_tokens=max_new_tokens)
+        model_reponse = super().predict(
+            image=image,
+            prompt=prompt,
+            max_new_tokens=max_new_tokens
+        )
+
+        # Разбор chat-формата, возвращаем только текст ассистента
         model_answer = model_reponse[0].split("assistant\n")[1]
         return model_answer
