@@ -14,20 +14,17 @@
     ValueError — при некорректных данных в датасете или ошибках в параметрах обучения.
 """
 
+from abc import ABC, abstractmethod
 from typing import Any
 
-from PIL import Image
 from peft import LoraConfig, get_peft_model
-from transformers import Trainer, TrainingArguments
-
-from abc import ABC, abstractmethod
+from PIL import Image
 from torch.utils.data import Dataset
-from transformers import ProcessorMixin, PreTrainedModel
+from transformers import PreTrainedModel, ProcessorMixin, Trainer, TrainingArguments
 
+from vlm_finetune.base.config import DEFAULT_LORA, DEFAULT_TRAINING
 from vlm_finetune.base.image import ImageProcessor
 from vlm_finetune.utils import set_logger
-from vlm_finetune.base.config import DEFAULT_LORA, DEFAULT_TRAINING
-
 
 logger = set_logger(__name__)
 
@@ -107,7 +104,7 @@ class VlmModel(ABC):
         )
 
         logger.info("Используется устройство: %s", self.model.device)
-        logger.info(f"Количество обучаемых параметров: %s", sum(p.numel() for p in model.parameters() if p.requires_grad))
+        logger.info("Количество обучаемых параметров: %s", sum(p.numel() for p in model.parameters() if p.requires_grad))
         logger.info("Начинаем finetune...")
 
         trainer.train()

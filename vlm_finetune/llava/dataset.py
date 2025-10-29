@@ -12,9 +12,10 @@
 """
 
 import torch
+from transformers.models.llava.processing_llava import LlavaProcessor
+
 from vlm_finetune import ImageProcessor
 from vlm_finetune.base import VlmDataset
-from transformers.models.llava.processing_llava import LlavaProcessor
 
 
 class LLavaDataset(VlmDataset):

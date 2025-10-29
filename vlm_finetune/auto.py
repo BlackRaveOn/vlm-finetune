@@ -23,6 +23,7 @@ from typing import Any, TypeVar
 
 import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
+
 from vlm_finetune.base import ImageProcessor
 
 T = TypeVar("T", bound="AutoVlmModel")

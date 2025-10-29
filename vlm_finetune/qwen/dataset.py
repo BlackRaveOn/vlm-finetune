@@ -12,9 +12,10 @@
 """
 
 import torch
+from transformers.models.qwen2_5_vl.processing_qwen2_5_vl import Qwen2_5_VLProcessor
+
 from vlm_finetune import ImageProcessor
 from vlm_finetune.base import VlmDataset
-from transformers.models.qwen2_5_vl.processing_qwen2_5_vl import Qwen2_5_VLProcessor
 
 
 class QwenDataset(VlmDataset):
