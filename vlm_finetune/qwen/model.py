@@ -42,7 +42,7 @@ class QwenModel(VlmModel):
         self,
         model: Qwen2_5_VLModel,
         processor: Qwen2_5_VLProcessor,
-        image_processor: ImageProcessor | None
+        image_processor: ImageProcessor | None = None
     ) -> None:
         """
         Инициализация экземпляра `LLavaModel`.

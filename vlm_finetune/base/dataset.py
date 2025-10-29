@@ -69,8 +69,7 @@ class VlmDataset(Dataset, ABC):
             self.data: list[dict[str, str]] = json.load(f)
         self.processor = processor
         self.prompt = prompt
-        if image_processor is None:
-            self.image_processor = ImageProcessor()
+        self.image_processor = image_processor
 
     def __len__(self) -> int:
         """

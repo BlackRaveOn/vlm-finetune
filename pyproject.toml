@@ -2,7 +2,7 @@
 name = "vlm_finetune"
 version = "0.1.0"
 description = "Fine-tuning vision-language models with CUDA"
-authors = ["Your Name <you@example.com>"]
+authors = ["Denis Vedenskiy vedenskiy.d.s@hse.ru"]
 readme = "README.md"
 
 [tool.poetry.dependencies]

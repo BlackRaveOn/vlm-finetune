@@ -42,7 +42,7 @@ class LLavaModel(VlmModel):
         self,
         model: LlavaModel,
         processor: LlavaProcessor,
-        image_processor: ImageProcessor | None
+        image_processor: ImageProcessor | None = None
     ) -> None:
         """
         Инициализация экземпляра `LLavaModel`.
