@@ -17,18 +17,18 @@
 from typing import Any, override
 
 from PIL import Image
-from transformers.models.llava.modeling_llava import LlavaModel
-from transformers.models.llava.processing_llava import LlavaProcessor
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLModel
+from transformers.models.qwen2_5_vl.processing_qwen2_5_vl import Qwen2_5_VLProcessor
 
 from vlm_finetune import AutoVlmModel, ImageProcessor
 from vlm_finetune.base import VlmModel
-from vlm_finetune.llava.dataset import LLavaDataset
+from vlm_finetune.qwen.dataset import QwenDataset
 from vlm_finetune.utils import set_logger
 
 logger = set_logger(__name__)
 
-@AutoVlmModel.register("llava")
-class LLavaModel(VlmModel):
+@AutoVlmModel.register("qwen")
+class QwenModel(VlmModel):
     """
     Класс `LLavaModel` представляет собой адаптер для модели LLaVA,
     обеспечивающий удобный интерфейс для обучения и инференса.
@@ -40,8 +40,8 @@ class LLavaModel(VlmModel):
 
     def __init__(
         self,
-        model: LlavaModel,
-        processor: LlavaProcessor,
+        model: Qwen2_5_VLModel,
+        processor: Qwen2_5_VLProcessor,
         image_processor: ImageProcessor | None
     ) -> None:
         """
@@ -82,7 +82,7 @@ class LLavaModel(VlmModel):
         Исключения:
             ValueError: если датасет пуст или некорректен.
         """
-        dataset = LLavaDataset(dataset_path=dataset_path, processor=self.processor, prompt=prompt, image_processor=self.image_processor)
+        dataset = QwenDataset(dataset_path=dataset_path, processor=self.processor, prompt=prompt, image_processor=self.image_processor)
         super().finetune(
             dataset=dataset, 
             output_dir=output_dir, 
@@ -109,5 +109,5 @@ class LLavaModel(VlmModel):
             RuntimeError: при ошибке генерации ответа.
         """
         model_reponse = super().predict(image=image, prompt=prompt, max_new_tokens=max_new_tokens)
-        model_answer = model_reponse[0].split("ASSISTANT:")[1].strip()
+        model_answer = model_reponse[0].split("assistant\n")[1]
         return model_answer

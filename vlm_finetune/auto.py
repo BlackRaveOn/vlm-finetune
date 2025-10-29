@@ -23,6 +23,7 @@ from typing import Any, TypeVar
 
 import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
+from vlm_finetune import ImageProcessor
 
 T = TypeVar("T", bound="AutoVlmModel")
 
@@ -93,6 +94,7 @@ class AutoVlmModel:
         device_map: str | None = None,
         model_params: dict[str, Any] | None = None,
         processor_params: dict[str, Any] | None = None,
+        image_processor = ImageProcessor | None
     ) -> T:
         """
         Фабричный метод для загрузки модели и процессора по имени и пути.
@@ -134,4 +136,4 @@ class AutoVlmModel:
         if subclass is None:
             raise ValueError(f"Неизвестный тип VLM модели: {model_name}")
 
-        return subclass(model=model, processor=processor)  # type: ignore
+        return subclass(model=model, processor=processor, image_processor=image_processor)  # type: ignore

@@ -14,10 +14,10 @@
 import torch
 from vlm_finetune import ImageProcessor
 from vlm_finetune.base import VlmDataset
-from transformers.models.llava.processing_llava import LlavaProcessor
+from transformers.models.qwen2_5_vl.processing_qwen2_5_vl import Qwen2_5_VLProcessor
 
 
-class LLavaDataset(VlmDataset):
+class QwenDataset(VlmDataset):
     """
     Класс датасета для обучения мультимодели LLaVA.
 
@@ -40,7 +40,7 @@ class LLavaDataset(VlmDataset):
         prompt (str | None): Общий промпт, если он не задан для конкретного примера.
     """
 
-    def __init__(self, dataset_path: str, processor: LlavaProcessor,  image_processor: ImageProcessor, prompt: str | None):
+    def __init__(self, dataset_path: str, processor: Qwen2_5_VLProcessor, image_processor: ImageProcessor, prompt: str | None):
         """
         Инициализация датасета.
 
@@ -98,7 +98,7 @@ class LLavaDataset(VlmDataset):
         prompt = item.get("prompt", self.prompt)
 
         image = self.image_processor.process_image(image_path=image_path)
-
+        # Создаём диалог
         conversation = [
             {
                 "role": "user",
@@ -110,49 +110,41 @@ class LLavaDataset(VlmDataset):
             {
                 "role": "assistant",
                 "content": [
-                    {"type": "text", "text": answer + self.processor.tokenizer.eos_token},
+                    {"type": "text", "text": answer},
                 ],
             },
         ]
 
-        text = self.processor.apply_chat_template(
+        # Получаем текстовую часть
+        text: str = self.processor.apply_chat_template(
             conversation,
-            tokenize=False,
-            add_generation_prompt=False,
+            tokenize=False
         )
 
-        encoding: dict[str, torch.Tensor] = self.processor(
+        # Токенизация
+        encoding = self.processor(
             text=text,
             images=image,
-            return_tensors="pt",
-            padding=False
+            return_tensors="pt"
         )
 
-        input_ids = encoding["input_ids"].squeeze(0)
-        attention_mask = encoding["attention_mask"].squeeze(0)
-        pixel_values = encoding["pixel_values"].squeeze(0)
+        input_ids: torch.Tensor = encoding["input_ids"][0]
 
-        # 🔍 Находим позицию начала "ASSISTANT:"
-        tokenized_assistant: torch.Tensor = self.processor.tokenizer(
-            "ASSISTANT:",
-            add_special_tokens=False
-        )["input_ids"]
-
-        start_idx = None
-        for i in range(len(input_ids) - len(tokenized_assistant)):
-            if torch.equal(input_ids[i:i + len(tokenized_assistant)], torch.tensor(tokenized_assistant)):
-                start_idx = i + len(tokenized_assistant)
-                break
-
-        if start_idx is None:
-            start_idx = 0  # fallback
+        # Находим индекс начала ассистента
+        assistant_start = text.find("<|im_start|>assistant")
+        if assistant_start != -1:
+            # Токенизируем до этого места, чтобы узнать, где обрезать
+            prefix = self.processor.tokenizer(text[:assistant_start], return_tensors="pt")
+            cutoff = prefix["input_ids"].size(1)
+        else:
+            cutoff = 0
 
         labels = input_ids.clone()
-        labels[:start_idx] = -100  # маскируем всё до начала ответа
+        labels[:cutoff] = -100
+        labels[labels == self.processor.tokenizer.pad_token_id] = -100
+        image_token_id = 151655
+        labels[labels == image_token_id] = -100
 
-        return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "pixel_values": pixel_values,
-            "labels": labels,
-        }
+        encoding["labels"] = labels.unsqueeze(0)
+
+        return {k: v.squeeze(0) for k, v in encoding.items()}

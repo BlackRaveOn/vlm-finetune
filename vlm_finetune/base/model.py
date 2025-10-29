@@ -14,21 +14,25 @@
     ValueError — при некорректных данных в датасете или ошибках в параметрах обучения.
 """
 
-from typing import Any, override
+from typing import Any
 
 from PIL import Image
-from transformers.models.llava.modeling_llava import LlavaModel
-from transformers.models.llava.processing_llava import LlavaProcessor
+from peft import LoraConfig, get_peft_model
+from transformers import Trainer, TrainingArguments
 
-from vlm_finetune import AutoVlmModel, ImageProcessor
-from vlm_finetune.base import VlmModel
-from vlm_finetune.llava.dataset import LLavaDataset
+from abc import ABC, abstractmethod
+from torch.utils.data import Dataset
+from transformers import ProcessorMixin, PreTrainedModel
+
+from vlm_finetune.base.image import ImageProcessor
 from vlm_finetune.utils import set_logger
+from vlm_finetune.base.config import DEFAULT_LORA, DEFAULT_TRAINING
+
 
 logger = set_logger(__name__)
 
-@AutoVlmModel.register("llava")
-class LLavaModel(VlmModel):
+
+class VlmModel(ABC):
     """
     Класс `LLavaModel` представляет собой адаптер для модели LLaVA,
     обеспечивающий удобный интерфейс для обучения и инференса.
@@ -40,8 +44,8 @@ class LLavaModel(VlmModel):
 
     def __init__(
         self,
-        model: LlavaModel,
-        processor: LlavaProcessor,
+        model: PreTrainedModel,
+        processor: ProcessorMixin,
         image_processor: ImageProcessor | None
     ) -> None:
         """
@@ -51,16 +55,17 @@ class LLavaModel(VlmModel):
             model: предобученная модель LLaVA.
             processor: процессор для обработки изображений и текстов.
         """
-        super().__init__(model=model, processor=processor, image_processor=image_processor)
+        self.model = model
+        self.processor = processor
+        self.image_processor = image_processor or ImageProcessor()
 
-    @override
+    @abstractmethod
     def finetune(
         self,
-        dataset_path: list[dict[str, str]],
+        dataset: Dataset,
         output_dir: str,
         learning_rate: float = 2e-4,
         num_train_epochs: int = 3,
-        prompt: str | None = None,
         lora_params: dict[str, Any] | None = None,
         training_params: dict[str, Any] | None = None,
     ) -> None:
@@ -82,17 +87,37 @@ class LLavaModel(VlmModel):
         Исключения:
             ValueError: если датасет пуст или некорректен.
         """
-        dataset = LLavaDataset(dataset_path=dataset_path, processor=self.processor, prompt=prompt, image_processor=self.image_processor)
-        super().finetune(
-            dataset=dataset, 
-            output_dir=output_dir, 
-            learning_rate=learning_rate, 
-            num_train_epochs=num_train_epochs, 
-            lora_params=lora_params, 
-            training_params=training_params
+        lora_params = lora_params or DEFAULT_LORA
+        lora_config = LoraConfig(**lora_params)
+        model = get_peft_model(self.model, lora_config)
+        model.print_trainable_parameters()
+
+        training_params = training_params or DEFAULT_TRAINING
+        training_args = TrainingArguments(
+            output_dir=output_dir,
+            learning_rate=learning_rate,
+            num_train_epochs=num_train_epochs,
+            **training_params,
         )
 
-    @override
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=dataset,
+        )
+
+        logger.info("Используется устройство: %s", self.model.device)
+        logger.info(f"Количество обучаемых параметров: %s", sum(p.numel() for p in model.parameters() if p.requires_grad))
+        logger.info("Начинаем finetune...")
+
+        trainer.train()
+        trainer.save_model()
+        self.processor.save_pretrained(output_dir)
+        logger.info("Модель успешно затюнена и сохранена в %s", output_dir)
+        self.model = trainer.model
+        logger.info("!Для предсказаний будет использоваться доученная модель!")
+
+    @abstractmethod
     def predict(self, image: Image.Image | str, prompt: str, max_new_tokens: int = 256) -> str:
         """
         Выполняет генерацию текстового ответа по изображению и текстовому запросу.
@@ -108,6 +133,26 @@ class LLavaModel(VlmModel):
         Исключения:
             RuntimeError: при ошибке генерации ответа.
         """
-        model_reponse = super().predict(image=image, prompt=prompt, max_new_tokens=max_new_tokens)
-        model_answer = model_reponse[0].split("ASSISTANT:")[1].strip()
-        return model_answer
+        if isinstance(image, str):
+            image = self.image_processor.process_image(image_path=image)
+
+        conversation = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": prompt},
+                ],
+            },
+        ]
+        inputs = self.processor.apply_chat_template(
+            conversation,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(self.model.device)
+
+        generate_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
+        model_response = self.processor.batch_decode(generate_ids, skip_special_tokens=True)
+        return model_response
