@@ -40,7 +40,7 @@ prompt = "Какой диагноз можно поставить по рент�
 image_path = "example.jpg"
 
 model.finetune(
-    dataset_path="llava_vet_dataset_train.json",
+    dataset_path="vet_dataset_train.json",
     output_dir="llava_tuned",
     prompt=prompt,
     num_train_epochs=3
